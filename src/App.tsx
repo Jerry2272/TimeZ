@@ -71,6 +71,11 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  // Invitation Logic
+  const [invitationToken, setInvitationToken] = useState<string | null>(null);
+  const [isTokenValid, setIsTokenValid] = useState<boolean>(false);
+  const [isProducerMode, setIsProducerMode] = useState(false);
+
   // Data States
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -83,12 +88,45 @@ export default function App() {
   const [authError, setAuthError] = useState('');
 
   useEffect(() => {
-    checkSetup();
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('invite');
+    const producer = params.get('producer');
+
+    if (producer === 'true') {
+      setIsProducerMode(true);
+      setLoading(false);
+      return;
+    }
+
+    if (token) {
+      setInvitationToken(token);
+      checkToken(token);
+    } else {
+      checkSetup();
+    }
+
     const savedUser = localStorage.getItem('timez_user');
     if (savedUser) {
       setUser(JSON.parse(savedUser));
     }
   }, []);
+
+  const checkToken = async (token: string) => {
+    try {
+      const res = await fetch(`/api/check-token/${token}`);
+      const data = await res.json();
+      setIsTokenValid(data.isValid);
+      
+      // Even if token is valid, check if system is already setup
+      const setupRes = await fetch('/api/check-setup');
+      const setupData = await setupRes.json();
+      setIsSetup(setupData.isSetup);
+      
+      setLoading(false);
+    } catch (e) {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (user) {
@@ -146,15 +184,15 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: authForm.username, password: authForm.password })
       });
+      const data = await res.json();
       if (res.ok) {
-        const data = await res.json();
         setUser(data);
         localStorage.setItem('timez_user', JSON.stringify(data));
       } else {
-        setAuthError('Invalid username or password');
+        setAuthError(data.error || 'Invalid username or password');
       }
     } catch (e) {
-      setAuthError('Connection error');
+      setAuthError('Connection error: Make sure the server is running.');
     }
   };
 
@@ -165,17 +203,38 @@ export default function App() {
       const res = await fetch('/api/setup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(authForm)
+        body: JSON.stringify({ ...authForm, token: invitationToken })
       });
+      const data = await res.json();
       if (res.ok) {
         setIsSetup(true);
-        setAuthError('Setup successful! Please login.');
+        setAuthError('Setup successful! You can now login.');
         setAuthForm({ ...authForm, password: '' });
+        // Clear URL params
+        window.history.replaceState({}, document.title, "/");
       } else {
-        setAuthError('Setup failed');
+        setAuthError(data.error || 'Setup failed. Please try again.');
       }
     } catch (e) {
-      setAuthError('Connection error');
+      setAuthError('Connection error: Database might be read-only or server is down.');
+    }
+  };
+
+  const [producerKey, setProducerKey] = useState('');
+  const [generatedLink, setGeneratedLink] = useState('');
+
+  const generateLink = async () => {
+    try {
+      const res = await fetch(`/api/admin/generate-token?key=${producerKey}`);
+      const data = await res.json();
+      if (data.token) {
+        const link = `${window.location.origin}/?invite=${data.token}`;
+        setGeneratedLink(link);
+      } else {
+        alert('Invalid Producer Key');
+      }
+    } catch (e) {
+      alert('Error generating link');
     }
   };
 
@@ -186,7 +245,66 @@ export default function App() {
 
   if (loading) return <div className="h-screen flex items-center justify-center">Loading...</div>;
 
+  if (isProducerMode) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-900 p-4">
+        <div className="w-full max-w-md glass-card p-8 bg-white">
+          <h1 className="text-2xl font-bold mb-6">Producer Dashboard</h1>
+          <p className="text-sm text-slate-500 mb-6">Enter your master key to generate a one-time invitation link for a customer.</p>
+          <input 
+            type="password" 
+            placeholder="Master Key"
+            className="w-full px-4 py-2 rounded-xl border mb-4"
+            value={producerKey}
+            onChange={(e) => setProducerKey(e.target.value)}
+          />
+          <button 
+            onClick={generateLink}
+            className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold"
+          >
+            Generate Invitation Link
+          </button>
+          
+          {generatedLink && (
+            <div className="mt-6 p-4 bg-slate-50 rounded-xl border border-dashed border-slate-300">
+              <p className="text-xs font-bold text-slate-400 uppercase mb-2">Customer Link (Send this):</p>
+              <p className="text-xs break-all font-mono bg-white p-2 border rounded select-all">{generatedLink}</p>
+              <p className="text-[10px] text-rose-500 mt-2 font-bold">⚠️ This link will expire after one use.</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (!user) {
+    // If system is not setup and no token is provided, show "Access Denied"
+    if (!isSetup && !invitationToken) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+          <div className="w-full max-w-md glass-card p-8 text-center">
+            <AlertCircle size={48} className="text-rose-500 mx-auto mb-4" />
+            <h1 className="text-2xl font-bold mb-2">Access Restricted</h1>
+            <p className="text-slate-500">This instance of TImeZ is not yet activated. Please use the unique invitation link provided by the producer to set up your account.</p>
+          </div>
+        </div>
+      );
+    }
+
+    // If token is provided but invalid
+    if (invitationToken && !isTokenValid && !isSetup) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+          <div className="w-full max-w-md glass-card p-8 text-center">
+            <X size={48} className="text-rose-500 mx-auto mb-4" />
+            <h1 className="text-2xl font-bold mb-2">Invalid Link</h1>
+            <p className="text-slate-500">This invitation link has already been used or is invalid. Please contact the producer for a new link.</p>
+            <button onClick={() => window.location.href = '/'} className="mt-6 text-indigo-600 font-bold">Go to Login</button>
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
         <motion.div 
@@ -206,16 +324,22 @@ export default function App() {
 
           <form onSubmit={isSetup ? handleLogin : handleSetup} className="space-y-4">
             {!isSetup && (
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Business Name</label>
-                <input 
-                  type="text" 
-                  required
-                  className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
-                  value={authForm.businessName}
-                  onChange={(e) => setAuthForm({ ...authForm, businessName: e.target.value })}
-                />
-              </div>
+              <>
+                <div className="p-3 bg-emerald-50 border border-emerald-100 rounded-xl mb-4">
+                  <p className="text-[10px] font-bold text-emerald-700 uppercase">Invitation Verified</p>
+                  <p className="text-xs text-emerald-600">Your one-time setup link is active.</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Business Name</label>
+                  <input 
+                    type="text" 
+                    required
+                    className="w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
+                    value={authForm.businessName}
+                    onChange={(e) => setAuthForm({ ...authForm, businessName: e.target.value })}
+                  />
+                </div>
+              </>
             )}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Username</label>

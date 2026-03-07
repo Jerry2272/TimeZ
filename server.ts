@@ -63,6 +63,13 @@ db.exec(`
     payment_date DATE
   );
 
+  CREATE TABLE IF NOT EXISTS invitation_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token TEXT UNIQUE,
+    is_used INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
   -- Seed Initial Data if empty
   INSERT OR IGNORE INTO inventory (name, sku, quantity, price, category) 
   SELECT 'Office Chair', 'OFF-001', 15, 45000, 'Furniture'
@@ -98,23 +105,66 @@ async function startServer() {
   };
 
   // API Routes
-  app.post("/api/setup", (req, res) => {
-    const { username, password, businessName } = req.body;
-    const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get() as { count: number };
-    if (userCount.count > 0) {
-      return res.status(400).json({ error: "System already setup. Only one user allowed." });
+  app.get("/api/admin/generate-token", (req, res) => {
+    const masterKey = req.query.key;
+    // You should set a MASTER_KEY in your environment variables
+    if (masterKey !== process.env.MASTER_KEY && masterKey !== 'timez_producer_2026') {
+      return res.status(403).json({ error: "Unauthorized" });
     }
-    const result = db.prepare("INSERT INTO users (username, password, business_name) VALUES (?, ?, ?)").run(username, password, businessName);
-    res.json({ id: result.lastInsertRowid });
+    const token = Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+    db.prepare("INSERT INTO invitation_tokens (token) VALUES (?)").run(token);
+    res.json({ token });
+  });
+
+  app.get("/api/check-token/:token", (req, res) => {
+    const token = db.prepare("SELECT * FROM invitation_tokens WHERE token = ? AND is_used = 0").get(req.params.token);
+    res.json({ isValid: !!token });
+  });
+
+  app.post("/api/setup", (req, res) => {
+    try {
+      const { username, password, businessName, token } = req.body;
+      if (!username || !password || !businessName || !token) {
+        return res.status(400).json({ error: "All fields including invitation token are required." });
+      }
+
+      // Verify Token
+      const tokenData = db.prepare("SELECT * FROM invitation_tokens WHERE token = ? AND is_used = 0").get(token) as any;
+      if (!tokenData) {
+        return res.status(400).json({ error: "Invalid or expired invitation link." });
+      }
+
+      const userCount = db.prepare("SELECT COUNT(*) as count FROM users").get() as { count: number };
+      if (userCount.count > 0) {
+        return res.status(400).json({ error: "System already setup. Only one user allowed." });
+      }
+
+      // Use Token and Create User
+      const runSetup = db.transaction(() => {
+        db.prepare("UPDATE invitation_tokens SET is_used = 1 WHERE token = ?").run(token);
+        return db.prepare("INSERT INTO users (username, password, business_name) VALUES (?, ?, ?)").run(username, password, businessName);
+      });
+
+      const result = runSetup();
+      res.json({ id: result.lastInsertRowid });
+    } catch (error: any) {
+      console.error("Setup Error:", error);
+      res.status(500).json({ error: error.message || "Internal server error during setup." });
+    }
   });
 
   app.post("/api/login", (req, res) => {
-    const { username, password } = req.body;
-    const user = db.prepare("SELECT * FROM users WHERE username = ? AND password = ?").get(username, password) as any;
-    if (user) {
-      res.json({ id: user.id, username: user.username, businessName: user.business_name });
-    } else {
-      res.status(401).json({ error: "Invalid credentials" });
+    try {
+      const { username, password } = req.body;
+      const user = db.prepare("SELECT * FROM users WHERE username = ? AND password = ?").get(username, password) as any;
+      if (user) {
+        res.json({ id: user.id, username: user.username, businessName: user.business_name });
+      } else {
+        res.status(401).json({ error: "Invalid username or password." });
+      }
+    } catch (error: any) {
+      console.error("Login Error:", error);
+      res.status(500).json({ error: "Database error during login." });
     }
   });
 
