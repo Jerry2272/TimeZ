@@ -3,6 +3,10 @@ import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import path from "path";
 import fs from "fs";
+import { fileURLToPath } from "url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const db = new Database("timez.db");
 
@@ -89,8 +93,8 @@ db.exec(`
 `);
 
 async function startServer() {
-  const app = express();
-  const PORT = 3000;
+  const app = express(); 
+  const PORT = process.env.PORT || 3000;
 
   app.use(express.json());
 
@@ -98,7 +102,7 @@ async function startServer() {
   const auth = (req: any, res: any, next: any) => {
     // In a real app, use JWT. For this demo, we'll use a simple header for "session"
     const userId = req.headers['x-user-id'];
-    if (!userId && req.path !== '/api/login' && req.path !== '/api/setup') {
+    if (!userId && req.path !== '/api/login' && req.path !== '/api/setup' && req.path !== '/api/check-setup' && !req.path.startsWith('/api/check-token/')) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     next();
@@ -199,13 +203,20 @@ async function startServer() {
       );
       const invoiceId = result.lastInsertRowid;
       const insertItem = db.prepare("INSERT INTO invoice_items (invoice_id, description, quantity, unit_price) VALUES (?, ?, ?, ?)");
-      for (const item of invoiceData.items) {
-        insertItem.run(invoiceId, item.description, item.quantity, item.unit_price);
+      if (invoiceData.items && Array.isArray(invoiceData.items)) {
+        for (const item of invoiceData.items) {
+          insertItem.run(invoiceId, item.description, item.quantity, item.unit_price);
+        }
       }
       return invoiceId;
     });
     const id = insertInvoice({ client_name, client_email, amount, status, due_date, items });
     res.json({ id });
+  });
+
+  app.post("/api/invoices/:id/pay", auth, (req, res) => {
+    db.prepare("UPDATE invoices SET status = 'paid' WHERE id = ?").run(req.params.id);
+    res.json({ success: true });
   });
 
   // Expenses
@@ -258,13 +269,13 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    app.use(express.static(path.join(__dirname, "dist")));
+    app.use(express.static(path.resolve("dist")));
     app.get("*", (req, res) => {
       res.sendFile(path.join(__dirname, "dist", "index.html"));
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
+  app.listen(Number(PORT), "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
 }

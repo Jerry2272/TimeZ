@@ -19,3 +19,7 @@
   @apply bg-indigo-600 text-white shadow-md shadow-indigo-200;
 }
 
+.modal-input {
+  @apply w-full px-4 py-2 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all;
+}
+

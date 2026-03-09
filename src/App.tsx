@@ -62,6 +62,38 @@ const SectionHeader = ({ title, description, action }: any) => (
   </div>
 );
 
+const Modal = ({ isOpen, onClose, title, children }: any) => (
+  <AnimatePresence>
+    {isOpen && (
+      <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={onClose}
+          className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm"
+        />
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95, y: 20 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.95, y: 20 }}
+          className="relative w-full max-w-lg bg-white rounded-2xl shadow-2xl overflow-hidden"
+        >
+          <div className="flex items-center justify-between p-6 border-b border-slate-100">
+            <h3 className="text-xl font-bold text-slate-900">{title}</h3>
+            <button onClick={onClose} className="p-2 text-slate-400 hover:bg-slate-50 rounded-lg">
+              <X size={20} />
+            </button>
+          </div>
+          <div className="p-6 max-h-[80vh] overflow-y-auto">
+            {children}
+          </div>
+        </motion.div>
+      </div>
+    )}
+  </AnimatePresence>
+);
+
 // --- Main App Component ---
 
 export default function App() {
@@ -86,6 +118,18 @@ export default function App() {
   // Auth States
   const [authForm, setAuthForm] = useState({ username: '', password: '', businessName: '' });
   const [authError, setAuthError] = useState('');
+
+  // Modal States
+  const [isInvoiceModalOpen, setIsInvoiceModalOpen] = useState(false);
+  const [isExpenseModalOpen, setIsExpenseModalOpen] = useState(false);
+  const [isInventoryModalOpen, setIsInventoryModalOpen] = useState(false);
+  const [isPayrollModalOpen, setIsPayrollModalOpen] = useState(false);
+
+  // Form States
+  const [invoiceForm, setInvoiceForm] = useState({ client_name: '', client_email: '', amount: '', due_date: '', status: 'pending' });
+  const [expenseForm, setExpenseForm] = useState({ category: 'Operations', amount: '', description: '', date: new Date().toISOString().split('T')[0] });
+  const [inventoryForm, setInventoryForm] = useState({ name: '', sku: '', quantity: '', price: '', category: 'General' });
+  const [payrollForm, setPayrollForm] = useState({ employee_name: '', role: '', salary: '', tax_deduction: '', net_pay: '', payment_date: new Date().toISOString().split('T')[0] });
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -227,20 +271,143 @@ export default function App() {
     try {
       const res = await fetch(`/api/admin/generate-token?key=${producerKey}`);
       const data = await res.json();
-      if (data.token) {
+      if (res.ok && data.token) {
         const link = `${window.location.origin}/?invite=${data.token}`;
         setGeneratedLink(link);
       } else {
-        alert('Invalid Producer Key');
+        alert(`Error: ${data.error || 'Invalid Producer Key'}`);
       }
     } catch (e) {
-      alert('Error generating link');
+      alert('Error generating link: The backend server is not responding. If you are on Vercel, please note that SQLite and Express servers are not supported there by default.');
     }
   };
 
   const handleLogout = () => {
     setUser(null);
     localStorage.removeItem('timez_user');
+  };
+
+  const handleAddInvoice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    try {
+      const res = await fetch('/api/invoices', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-user-id': user.id.toString()
+        },
+        body: JSON.stringify({
+          ...invoiceForm,
+          amount: parseFloat(invoiceForm.amount),
+          items: [] // Simplified for now
+        })
+      });
+      if (res.ok) {
+        setIsInvoiceModalOpen(false);
+        setInvoiceForm({ client_name: '', client_email: '', amount: '', due_date: '', status: 'pending' });
+        fetchData();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAddExpense = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    try {
+      const res = await fetch('/api/expenses', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-user-id': user.id.toString()
+        },
+        body: JSON.stringify({
+          ...expenseForm,
+          amount: parseFloat(expenseForm.amount)
+        })
+      });
+      if (res.ok) {
+        setIsExpenseModalOpen(false);
+        setExpenseForm({ category: 'Operations', amount: '', description: '', date: new Date().toISOString().split('T')[0] });
+        fetchData();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAddInventory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    try {
+      const res = await fetch('/api/inventory', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-user-id': user.id.toString()
+        },
+        body: JSON.stringify({
+          ...inventoryForm,
+          quantity: parseInt(inventoryForm.quantity),
+          price: parseFloat(inventoryForm.price)
+        })
+      });
+      if (res.ok) {
+        setIsInventoryModalOpen(false);
+        setInventoryForm({ name: '', sku: '', quantity: '', price: '', category: 'General' });
+        fetchData();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAddPayroll = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    try {
+      const salary = parseFloat(payrollForm.salary);
+      const tax = parseFloat(payrollForm.tax_deduction) || 0;
+      const net = salary - tax;
+      
+      const res = await fetch('/api/payroll', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-user-id': user.id.toString()
+        },
+        body: JSON.stringify({
+          ...payrollForm,
+          salary,
+          tax_deduction: tax,
+          net_pay: net
+        })
+      });
+      if (res.ok) {
+        setIsPayrollModalOpen(false);
+        setPayrollForm({ employee_name: '', role: '', salary: '', tax_deduction: '', net_pay: '', payment_date: new Date().toISOString().split('T')[0] });
+        fetchData();
+      }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleMarkPaid = async (id: number) => {
+    if (!user) return;
+    try {
+      const res = await fetch(`/api/invoices/${id}/pay`, {
+        method: 'POST',
+        headers: { 'x-user-id': user.id.toString() }
+      });
+      if (res.ok) {
+        fetchData();
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   if (loading) return <div className="h-screen flex items-center justify-center">Loading...</div>;
@@ -540,9 +707,9 @@ export default function App() {
                   />
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    <StatCard title="Total Revenue" value={`₦${report?.income.toLocaleString()}`} icon={DollarSign} trend={12} color="bg-indigo-600" />
-                    <StatCard title="Total Expenses" value={`₦${report?.expenses.toLocaleString()}`} icon={Receipt} trend={-5} color="bg-rose-600" />
-                    <StatCard title="Net Profit" value={`₦${report?.profit.toLocaleString()}`} icon={TrendingUp} trend={8} color="bg-emerald-600" />
+                    <StatCard title="Total Revenue" value={`₦${(report?.income || 0).toLocaleString()}`} icon={DollarSign} trend={12} color="bg-indigo-600" />
+                    <StatCard title="Total Expenses" value={`₦${(report?.expenses || 0).toLocaleString()}`} icon={Receipt} trend={-5} color="bg-rose-600" />
+                    <StatCard title="Net Profit" value={`₦${(report?.profit || 0).toLocaleString()}`} icon={TrendingUp} trend={8} color="bg-emerald-600" />
                   </div>
 
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -617,7 +784,7 @@ export default function App() {
                   <SectionHeader 
                     title="Invoices" 
                     description="Manage your client billing and payments."
-                    action={{ label: 'New Invoice', onClick: () => {} }}
+                    action={{ label: 'New Invoice', onClick: () => setIsInvoiceModalOpen(true) }}
                   />
                   <div className="glass-card overflow-hidden">
                     <div className="overflow-x-auto">
@@ -647,7 +814,15 @@ export default function App() {
                                 </span>
                               </td>
                               <td className="px-6 py-4 text-sm text-slate-500">{inv.due_date}</td>
-                              <td className="px-6 py-4 text-right">
+                              <td className="px-6 py-4 text-right flex justify-end gap-2">
+                                {inv.status !== 'paid' && (
+                                  <button 
+                                    onClick={() => handleMarkPaid(inv.id)}
+                                    className="text-xs font-bold text-emerald-600 hover:bg-emerald-50 px-2 py-1 rounded-lg transition-all"
+                                  >
+                                    Mark Paid
+                                  </button>
+                                )}
                                 <button className="p-2 text-slate-400 hover:text-indigo-600 transition-all">
                                   <Download size={18} />
                                 </button>
@@ -666,7 +841,7 @@ export default function App() {
                   <SectionHeader 
                     title="Expenses" 
                     description="Track your business spending and categories."
-                    action={{ label: 'Log Expense', onClick: () => {} }}
+                    action={{ label: 'Log Expense', onClick: () => setIsExpenseModalOpen(true) }}
                   />
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
                     <div className="glass-card p-6">
@@ -711,7 +886,7 @@ export default function App() {
                   <SectionHeader 
                     title="Inventory" 
                     description="Monitor stock levels and product pricing."
-                    action={{ label: 'Add Product', onClick: () => {} }}
+                    action={{ label: 'Add Product', onClick: () => setIsInventoryModalOpen(true) }}
                   />
                   <div className="glass-card overflow-hidden">
                     <table className="w-full text-left">
@@ -751,7 +926,7 @@ export default function App() {
                   <SectionHeader 
                     title="Payroll" 
                     description="Manage employee salaries and tax deductions."
-                    action={{ label: 'Process Payroll', onClick: () => {} }}
+                    action={{ label: 'Process Payroll', onClick: () => setIsPayrollModalOpen(true) }}
                   />
                   <div className="glass-card overflow-hidden">
                     <table className="w-full text-left">
@@ -857,6 +1032,127 @@ export default function App() {
           </AnimatePresence>
         </div>
       </main>
+
+      {/* Modals */}
+      <Modal isOpen={isInvoiceModalOpen} onClose={() => setIsInvoiceModalOpen(false)} title="Create New Invoice">
+        <form onSubmit={handleAddInvoice} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Client Name</label>
+            <input type="text" required className="modal-input" value={invoiceForm.client_name} onChange={e => setInvoiceForm({...invoiceForm, client_name: e.target.value})} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Client Email</label>
+            <input type="email" required className="modal-input" value={invoiceForm.client_email} onChange={e => setInvoiceForm({...invoiceForm, client_email: e.target.value})} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Amount (₦)</label>
+              <input type="number" required className="modal-input" value={invoiceForm.amount} onChange={e => setInvoiceForm({...invoiceForm, amount: e.target.value})} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
+              <select className="modal-input" value={invoiceForm.status} onChange={e => setInvoiceForm({...invoiceForm, status: e.target.value})}>
+                <option value="pending">Pending</option>
+                <option value="paid">Paid</option>
+                <option value="overdue">Overdue</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Due Date</label>
+            <input type="date" required className="modal-input" value={invoiceForm.due_date} onChange={e => setInvoiceForm({...invoiceForm, due_date: e.target.value})} />
+          </div>
+          <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold mt-4">Create Invoice</button>
+        </form>
+      </Modal>
+
+      <Modal isOpen={isExpenseModalOpen} onClose={() => setIsExpenseModalOpen(false)} title="Log Business Expense">
+        <form onSubmit={handleAddExpense} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Description</label>
+            <input type="text" required className="modal-input" value={expenseForm.description} onChange={e => setExpenseForm({...expenseForm, description: e.target.value})} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
+              <select className="modal-input" value={expenseForm.category} onChange={e => setExpenseForm({...expenseForm, category: e.target.value})}>
+                <option>Operations</option>
+                <option>Marketing</option>
+                <option>Utilities</option>
+                <option>Rent</option>
+                <option>Other</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Amount (₦)</label>
+              <input type="number" required className="modal-input" value={expenseForm.amount} onChange={e => setExpenseForm({...expenseForm, amount: e.target.value})} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Date</label>
+            <input type="date" required className="modal-input" value={expenseForm.date} onChange={e => setExpenseForm({...expenseForm, date: e.target.value})} />
+          </div>
+          <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold mt-4">Save Expense</button>
+        </form>
+      </Modal>
+
+      <Modal isOpen={isInventoryModalOpen} onClose={() => setIsInventoryModalOpen(false)} title="Add New Product">
+        <form onSubmit={handleAddInventory} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Product Name</label>
+            <input type="text" required className="modal-input" value={inventoryForm.name} onChange={e => setInventoryForm({...inventoryForm, name: e.target.value})} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">SKU</label>
+              <input type="text" required className="modal-input" value={inventoryForm.sku} onChange={e => setInventoryForm({...inventoryForm, sku: e.target.value})} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Category</label>
+              <input type="text" required className="modal-input" value={inventoryForm.category} onChange={e => setInventoryForm({...inventoryForm, category: e.target.value})} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Quantity</label>
+              <input type="number" required className="modal-input" value={inventoryForm.quantity} onChange={e => setInventoryForm({...inventoryForm, quantity: e.target.value})} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Price (₦)</label>
+              <input type="number" required className="modal-input" value={inventoryForm.price} onChange={e => setInventoryForm({...inventoryForm, price: e.target.value})} />
+            </div>
+          </div>
+          <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold mt-4">Add Product</button>
+        </form>
+      </Modal>
+
+      <Modal isOpen={isPayrollModalOpen} onClose={() => setIsPayrollModalOpen(false)} title="Process Payroll">
+        <form onSubmit={handleAddPayroll} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Employee Name</label>
+            <input type="text" required className="modal-input" value={payrollForm.employee_name} onChange={e => setPayrollForm({...payrollForm, employee_name: e.target.value})} />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Role</label>
+            <input type="text" required className="modal-input" value={payrollForm.role} onChange={e => setPayrollForm({...payrollForm, role: e.target.value})} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Gross Salary (₦)</label>
+              <input type="number" required className="modal-input" value={payrollForm.salary} onChange={e => setPayrollForm({...payrollForm, salary: e.target.value})} />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Tax Deduction (₦)</label>
+              <input type="number" className="modal-input" value={payrollForm.tax_deduction} onChange={e => setPayrollForm({...payrollForm, tax_deduction: e.target.value})} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Payment Date</label>
+            <input type="date" required className="modal-input" value={payrollForm.payment_date} onChange={e => setPayrollForm({...payrollForm, payment_date: e.target.value})} />
+          </div>
+          <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold mt-4">Confirm Payment</button>
+        </form>
+      </Modal>
     </div>
   );
 }
